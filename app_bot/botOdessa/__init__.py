@@ -77,13 +77,21 @@ def get_text_messages(message):
         elif message.text == "Предложить новость":
             functions.suggestNews(message)
         elif message.text == "Список заявок":
-            functions.showtaskList(message, "active", 0)
+            functions.showTasksSubMenu(message)
         elif message.text == "Добавить заявку":
             functions.createTask(message)
         elif message.text == "Список новостей":
             functions.showNews(message, 0)
         elif message.text == "Погода":
             functions.getWeather(message)
+        elif message.text == "Мои заявки":
+            functions.showMyTasksMenu(message)
+        elif message.text == "Активные заявки":
+            functions.getMyActiveTasks(message, user)
+        elif message.text == "Созданные заявки":
+            functions.getMyTasks(message)
+        elif message.text == "Все заявки":
+            functions.showtaskList(message, "active", 0)
         else:
             bot.send_message(message.from_user.id, "Я тебя не понимаю. Напиши /help.")
 
@@ -104,9 +112,23 @@ def process_callback(data):
     args = data.data
     args = args.split(":")
     type = args[1]
-    offset = int(args[2])
+    if type == "process":
+        id = args[2]
+        cursor.execute('UPDATE tasks SET status="process" WHERE id=%s;' % id)
+        cursor.execute('INSERT INTO user_tasks VALUE(%s, %s);' % (user[0], id))
+        cursor.execute('SELECT * FROM tasks WHERE id=%s;' % id)
+        data = cursor.fetchone()
+        db.commit()
+
+        info = "Вашу заявку - '%s' начали выполнять!" % data[1]
+
+        bot.send_message(data[5], info)
+        bot.send_message(message.chat.id, "Заявка начата!")
+    else:
+        offset = int(args[2])
+        functions.showtaskList(data.message, type, offset)
+
     if message is not None: bot.delete_message(message.chat.id, message.message_id)
-    functions.showtaskList(data.message, type, offset)
 
 # Handler for admin commands
 @bot.callback_query_handler(func=lambda c: c.data.find("admin") != -1)

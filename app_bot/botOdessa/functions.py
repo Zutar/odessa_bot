@@ -4,9 +4,11 @@ import telebot
 import json, urllib.request
 import re
 from datetime import datetime
+from pytz import timezone
 from app_bot import config
 
 cursor = db.cursor()
+ukraine_time = timezone('Europe/Kiev')
 
 # Show profile menu
 def showProfileMenu(message, user):
@@ -27,7 +29,7 @@ def showProfileMenu(message, user):
     else:
         taskCount = 0
 
-    info = '*Ваш профиль* \n ID: {0} \n Имя: {1} \n Возраст: {2} \n Количество новостей: {3} \n Количество заявок: {4}'.format(user[0], user[2], age, newsCount, taskCount)
+    info = '*Ваш профиль* \n ID: {0} \n Имя: {1} \n Возраст: {2} \n Количество предложенных новостей: {3} \n Количество созданных заявок: {4}'.format(user[0], user[2], age, newsCount, taskCount)
     #keyboard = telebot.types.ReplyKeyboardRemove()
     bot.send_message(message.chat.id, info, parse_mode="Markdown")
 
@@ -45,6 +47,21 @@ def showTasksMenu(message):
 
     bot.send_message(message.chat.id, "Заявки", reply_markup=keyboard, parse_mode="Markdown")
 
+# Show task sub menu window
+def showTasksSubMenu(message):
+    keyboard = telebot.types.ReplyKeyboardMarkup(True)
+    keyboard.row('Главная', 'Все заявки', "Мои заявки")
+
+    bot.send_message(message.chat.id, "Заявки", reply_markup=keyboard, parse_mode="Markdown")
+
+# Show my tasks menu window
+def showMyTasksMenu(message):
+    keyboard = telebot.types.ReplyKeyboardMarkup(True)
+    keyboard.row('Главная', 'Активные заявки', "Созданные заявки")
+
+    bot.send_message(message.chat.id, "Заявки", reply_markup=keyboard, parse_mode="Markdown")
+
+
 # Show main window
 def showMain(message):
     keyboard = telebot.types.ReplyKeyboardMarkup(True)
@@ -58,7 +75,7 @@ def showMain(message):
 
         rates += "%s/%s            %s / %s\n" % (item[0], item[1], item[2], item[3])
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now(ukraine_time).strftime("%Y-%m-%d %H:%M:%S")
 
     info = '*Одесса*\n\n' \
            '*Время:* %s\n\n' \
@@ -74,7 +91,7 @@ def showNews(message, start):
     news = getNews(1, start)
 
     if len(news) > 0:
-        news = news[0]
+        news = news[0] # get first data
         max = news[-1] # get max page
         back = "news:%s" % (start - 1)
         forward = "news:%s" % (start + 1)
@@ -147,7 +164,7 @@ def doNewsS3(message, title, description):
     description = re.sub('\'', '\\\'', description)
 
     query = "INSERT INTO news VALUE(NULL, '%s', '%s', '%s', '%s', '%s', '%s', 'new', '%s');" % (
-    title, description, int(datetime.now().timestamp()), "-", "-", author, message.chat.id)
+    title, description, int(datetime.now(ukraine_time).timestamp()), "-", "-", author, message.chat.id)
     cursor.execute(query)
     db.commit()
 
@@ -230,15 +247,18 @@ def showtaskList(message, type, start):
 
         if data is not None:
             max = data[9] # get max page
+            process = "tasks:%s:%s" % ("process", data[0]) # info for start task
 
             if type == "active":
                 if start > -1 and start < 1:
-
-                    markup.row(telebot.types.InlineKeyboardButton(text='Вперед', callback_data=forward))
+                    markup.row(telebot.types.InlineKeyboardButton(text='Вперед', callback_data=forward),
+                               telebot.types.InlineKeyboardButton(text='Начать', callback_data=process))
                 elif start == int(max) - 1:
-                    markup.row(telebot.types.InlineKeyboardButton(text='Назад', callback_data=back))
+                    markup.row(telebot.types.InlineKeyboardButton(text='Назад', callback_data=back),
+                               telebot.types.InlineKeyboardButton(text='Начать', callback_data=process))
                 else:
                     markup.row(telebot.types.InlineKeyboardButton(text='Назад', callback_data=back),
+                               telebot.types.InlineKeyboardButton(text='Начать', callback_data=process),
                                telebot.types.InlineKeyboardButton(text='Вперед', callback_data=forward))
 
             elif type == "finish":
@@ -251,7 +271,7 @@ def showtaskList(message, type, start):
                                telebot.types.InlineKeyboardButton(text='👎', callback_data="false"),
                                telebot.types.InlineKeyboardButton(text='Вперед', callback_data=forward))
 
-            date = datetime.utcfromtimestamp(int(data[7])).strftime('%Y-%m-%d %H:%M:%S')
+            date = datetime.utcfromtimestamp(int(data[7])).strftime('%Y-%m-%d %H:%M:%S') # Get local type date
             info += "\n\n" \
                     "*%s*\n\n" \
                     "%s\n\n" \
@@ -302,7 +322,7 @@ def doTaskS3(message, title, description):
     title = re.sub('\'', '\\\'', title)
     description = re.sub('\'', '\\\'', description)
 
-    query = "INSERT INTO tasks VALUE(NULL, '%s', '%s', '%s', '-', '%s', '%s', '%s', '%s');" % (title, description, 'new', message.chat.id, author, int(datetime.now().timestamp()), '')
+    query = "INSERT INTO tasks VALUE(NULL, '%s', '%s', '%s', '-', '%s', '%s', '%s', '%s');" % (title, description, 'new', message.chat.id, author, int(datetime.now(ukraine_time).timestamp()), '')
     cursor.execute(query)
     db.commit()
 
@@ -325,6 +345,38 @@ def doTaskS3(message, title, description):
     # Send message to user
     bot.send_message(message.chat.id, info)
     showMain(message)
+
+def getMyActiveTasks(message, user):
+    query = 'SELECT * FROM tasks INNER JOIN user_tasks ON tasks.id = user_tasks.taskId WHERE userId=%s;' % user[0]
+    cursor.execute(query)
+    data = cursor.fetchall()
+    info = '*Ваши активные заявки*\n'
+
+    for item in data:
+        date = datetime.utcfromtimestamp(int(item[7])).strftime('%Y-%m-%d %H:%M:%S')  # Get local type date
+        info += "\n\n" \
+                "*%s*\n\n" \
+                "%s\n\n" \
+                "Дата создания: %s\n\n" \
+                "Автор: %s" % (item[1], item[2], date, item[6])
+
+    bot.send_message(message.chat.id, text=info, parse_mode="Markdown")
+
+def getMyTasks(message):
+    query = 'SELECT * FROM tasks WHERE authorId=%s;' % message.chat.id
+    cursor.execute(query)
+    data = cursor.fetchall()
+    info = '*Ваши созданные заявки*\n'
+
+    for item in data:
+        date = datetime.utcfromtimestamp(int(item[7])).strftime('%Y-%m-%d %H:%M:%S')  # Get local type date
+        info += "\n\n" \
+                "*%s*\n\n" \
+                "%s\n\n" \
+                "Дата создания: %s\n\n" \
+                "Автор: %s" % (item[1], item[2], date, item[6])
+
+    bot.send_message(message.chat.id, text=info, parse_mode="Markdown")
 
 # Get weather data
 def getWeather(message):
